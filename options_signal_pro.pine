@@ -56,6 +56,15 @@ kc_upper = ta.sma(close, 20) + 1.5 * ta.atr(20)
 kc_lower = ta.sma(close, 20) - 1.5 * ta.atr(20)
 is_squeeze = bb_upper < kc_upper and bb_lower > kc_lower
 
+// Breakout Logic (Price breaking out of Bands after a Squeeze)
+was_squeeze = is_squeeze[1]
+breakout_up = not is_squeeze and was_squeeze and close > bb_upper
+breakout_dn = not is_squeeze and was_squeeze and close < bb_lower
+
+// Liquidity (Volume SMA)
+vol_sma = ta.sma(volume, 50)
+high_liquidity = volume > vol_sma * 1.5
+
 // SuperTrend
 [st_val, st_dir] = ta.supertrend(st_factor, st_atr_len)
 st_buy  = st_dir < 0
@@ -102,15 +111,19 @@ plot(ema21, "Medium Term", color=color.new(color.yellow, 60))
 plot(ema50, "Trend Line", color=st_buy ? color.green : color.red, linewidth=2)
 
 // Labels
-if (ultra_buy)
-    label.new(bar_index, low, "💎 ULTRA BUY", color=color.new(color.aqua, 0), textcolor=color.black, style=label.style_label_up, yloc=yloc.belowbar, size=size.normal)
-    alert("Enterprise Ultra Buy!", alert.freq_once_per_bar_close)
+if (ultra_buy or breakout_up)
+    string txt = ultra_buy ? "💎 ULTRA BUY" : "🔥 BREAKOUT UP"
+    label.new(bar_index, low, txt, color=color.new(color.aqua, 0), textcolor=color.black, style=label.style_label_up, yloc=yloc.belowbar, size=size.normal)
+    if barstate.isconfirmed
+        alert("Enterprise Signal: " + txt, alert.freq_once_per_bar_close)
 else if (buy_trigger)
     label.new(bar_index, low, "BUY", color=color.new(color.green, 0), textcolor=color.white, style=label.style_label_up, yloc=yloc.belowbar, size=size.small)
 
-if (ultra_sell)
-    label.new(bar_index, high, "🔥 ULTRA SELL", color=color.new(color.orange, 0), textcolor=color.black, style=label.style_label_down, yloc=yloc.abovebar, size=size.normal)
-    alert("Enterprise Ultra Sell!", alert.freq_once_per_bar_close)
+if (ultra_sell or breakout_dn)
+    string txt = ultra_sell ? "🔥 ULTRA SELL" : "🔥 BREAKOUT DOWN"
+    label.new(bar_index, high, txt, color=color.new(color.orange, 0), textcolor=color.black, style=label.style_label_down, yloc=yloc.abovebar, size=size.normal)
+    if barstate.isconfirmed
+        alert("Enterprise Signal: " + txt, alert.freq_once_per_bar_close)
 else if (sell_trigger)
     label.new(bar_index, high, "SELL", color=color.new(color.red, 0), textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar, size=size.small)
 
@@ -141,7 +154,8 @@ if (barstate.islast)
     
     // Targets
     table.cell(stats, 0, 4, "Current Signal", text_color=color.white)
-    table.cell(stats, 1, 4, ultra_buy ? "ULTRA BUY" : ultra_sell ? "ULTRA SELL" : "Looking...", text_color=color.white)
+    string sig_txt = ultra_buy ? "ULTRA BUY" : ultra_sell ? "ULTRA SELL" : breakout_up ? "BREAKOUT" : "Looking..."
+    table.cell(stats, 1, 4, sig_txt, text_color=color.white)
     
     table.cell(stats, 0, 5, "TP2 Target", text_color=color.white)
     table.cell(stats, 1, 5, str.format("{0,number,#.##}", tp2_lvl), text_color=color.green)
