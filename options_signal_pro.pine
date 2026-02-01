@@ -2,132 +2,122 @@
 // © ranjitraktim5
 
 //@version=6
-indicator("High Profit Options Signal - Pro", overlay=true, max_labels_count=500, max_lines_count=500)
+indicator("GOLDEN OPTIONS PRO [Ultra-Reliable]", overlay=true, max_labels_count=500, max_lines_count=500)
 
+// ==========================================
 // --- INPUTS ---
-grp_trend = "Trend Identification (Hull Suite)"
-hull_len  = input.int(55, "Hull Length", minval=1, group=grp_trend)
-hull_mult = input.float(1.0, "Hull Multiplier", minval=0.1, step=0.1, group=grp_trend)
+// ==========================================
+grp1 = "⚡ Strategy Settings"
+st_atr_len = input.int(10, "SuperTrend Period", minval=1, group=grp1)
+st_factor  = input.float(3.0, "SuperTrend Factor", minval=0.1, step=0.1, group=grp1)
+rsi_limit  = input.int(50, "Momentum Threshold (RSI)", group=grp1)
 
-grp_momentum = "Momentum & Volume"
-rsi_len = input.int(14, "RSI Length", group=grp_momentum)
-rsi_limit_long = input.int(50, "Buy Signal RSI Minimum", group=grp_momentum)
-rsi_limit_short = input.int(50, "Sell Signal RSI Maximum", group=grp_momentum)
-vol_len = input.int(20, "Volume SMA Length", group=grp_momentum)
+grp2 = "📈 Trade Lines (EMAs)"
+ema_fast = input.int(9, "Fast Line", group=grp2)
+ema_med  = input.int(50, "Trade Line (EMA 50)", group=grp2)
+ema_slow = input.int(200, "Market Bias (EMA 200)", group=grp2)
 
-grp_risk = "Risk Management (ATR Targets)"
-atr_len      = input.int(14, "ATR Length", group=grp_risk)
-atr_mult_sl  = input.float(1.5, "Stop Loss Multiplier", step=0.1, group=grp_risk)
-atr_mult_tp1 = input.float(1.1, "Take Profit 1 Multiplier", step=0.1, group=grp_risk)
-atr_mult_tp2 = input.float(2.2, "Take Profit 2 Multiplier", step=0.1, group=grp_risk)
+grp3 = "💰 Profit & Risk"
+atr_len = input.int(14, "ATR Period", group=grp3)
+sl_mult = input.float(1.5, "Stop Loss ATR Mult", step=0.1, group=grp3)
+tp_mult = input.float(2.0, "Take Profit ATR Mult", step=0.1, group=grp3)
 
+// ==========================================
 // --- CALCULATIONS ---
-// Hull Moving Average Suite (Fast & Smooth)
-hull_ma(src, len) =>
-    ta.wma(2 * ta.wma(src, len / 2) - ta.wma(src, len), math.round(math.sqrt(len)))
+// ==========================================
+// Indicators (Calculated on every bar)
+ema9   = ta.ema(close, ema_fast)
+ema50  = ta.ema(close, ema_med)
+ema200 = ta.ema(close, ema_slow)
+rsi    = ta.rsi(close, 14)
+atr    = ta.atr(atr_len)
+vol_ma = ta.sma(volume, 20)
 
-hma = hull_ma(close, math.round(hull_len * hull_mult))
-hma_prev = hma[1]
+// SuperTrend
+[st_val, st_dir] = ta.supertrend(st_factor, st_atr_len)
+st_buy  = st_dir < 0
+st_sell = st_dir > 0
 
-// Momentum & Volume
-rsi = ta.rsi(close, rsi_len)
-vol_sma = ta.sma(volume, vol_len)
-vol_bullish = volume > vol_sma
-rsi_bullish = rsi > rsi_limit_long
-rsi_bearish = rsi < rsi_limit_short
+// Trigger detections (Global scope for consistency)
+buy_cross    = ta.change(st_dir) < 0
+sell_cross   = ta.change(st_dir) > 0
 
-// Trend Direction
-trend_up = hma > hma_prev
-trend_dn = hma < hma_prev
-
+// ==========================================
 // --- SIGNAL LOGIC ---
-// Core Variables (Called on every bar for consistency)
-buy_change    = ta.change(buy_trigger)
-strong_buy_ch = ta.change(strong_buy)
-sell_change   = ta.change(sell_trigger)
-strong_sell_ch= ta.change(strong_sell)
+// ==========================================
+// Primary Confirmation
+bullish_market = close > ema200
+bearish_market = close < ema200
 
-// --- ATR-BASED TARGETS ---
-atr = ta.atr(atr_len)
+// BUY SIGNALS
+buy_signal   = buy_cross and close > ema50 and rsi > rsi_limit
+strong_buy   = buy_signal and bullish_market and volume > vol_ma and rsi > 60
+
+// SELL SIGNALS
+sell_signal  = sell_cross and close < ema50 and rsi < rsi_limit
+strong_sell  = sell_signal and bearish_market and volume > vol_ma and rsi < 40
+
+// --- ATR TARGETS ---
 var float sl_price = na
-var float tp1_price = na
-var float tp2_price = na
+var float tp_price = na
 
-if (buy_change > 0 or strong_buy_ch > 0)
-    sl_price  := low - (atr * atr_mult_sl)
-    tp1_price := close + (atr * atr_mult_tp1)
-    tp2_price := close + (atr * atr_mult_tp2)
+if (buy_signal or strong_buy)
+    sl_price := low - (atr * sl_mult)
+    tp_price := close + (atr * tp_mult)
 
-if (sell_change > 0 or strong_sell_ch > 0)
-    sl_price  := high + (atr * atr_mult_sl)
-    tp1_price := close - (atr * atr_mult_tp1)
-    tp2_price := close - (atr * atr_mult_tp2)
+if (sell_signal or strong_sell)
+    sl_price := high + (atr * sl_mult)
+    tp_price := close - (atr * tp_mult)
 
+// ==========================================
 // --- VISUALS ---
-// Plot Trend Line (The "Path")
-hma_color = trend_up ? color.green : color.red
-plot(hma, "Trend Line", color=color.new(hma_color, 20), linewidth=3)
+// ==========================================
+// Plot Trade Lines
+plot(ema9, "EMA 9", color=color.new(color.aqua, 60))
+plot(ema50, "Trade Line (EMA 50)", color=st_buy ? color.green : color.red, linewidth=3)
+plot(ema200, "EMA 200", color=color.new(color.white, 30), linewidth=1)
 
-// Background Fill for Trend
-bgcolor(trend_up ? color.new(color.green, 95) : color.new(color.red, 95))
+// Background color for easy trend identification
+bgcolor(st_buy ? color.new(color.green, 95) : color.new(color.red, 95))
 
-// Signal Management for Real-Time Charts
-var label trigger_label = na
-
-// Clear labels on current bar if they aren't confirmed yet (to prevent flickering duplicates)
+// Signal Management for Real-Time Charts (Prevents flickering)
+var label signal_label = na
 if barstate.isrealtime and not barstate.isconfirmed
-    label.delete(trigger_label)
+    label.delete(signal_label)
 
-if (strong_buy_ch > 0)
-    trigger_label := label.new(bar_index, low, "🚀 STRONG BUY", color=color.green, textcolor=color.black, style=label.style_label_up, yloc=yloc.belowbar)
-    if barstate.isconfirmed
-        alert("Strong Buy Signal!", alert.freq_once_per_bar_close)
-else if (buy_change > 0)
-    trigger_label := label.new(bar_index, low, "BUY", color=color.lime, textcolor=color.black, style=label.style_label_up, yloc=yloc.belowbar)
-    if barstate.isconfirmed
-        alert("Buy Signal!", alert.freq_once_per_bar_close)
+// Display Labels
+if (strong_buy)
+    signal_label := label.new(bar_index, low, "� STRONG BUY", color=color.green, textcolor=color.black, style=label.style_label_up, yloc=yloc.belowbar)
+    alert("Strong Buy Opportunity!", alert.freq_once_per_bar_close)
+else if (buy_signal)
+    signal_label := label.new(bar_index, low, "BUY", color=color.lime, textcolor=color.black, style=label.style_label_up, yloc=yloc.belowbar)
+    alert("Buy Signal!", alert.freq_once_per_bar_close)
 
-if (strong_sell_ch > 0)
-    trigger_label := label.new(bar_index, high, "💀 STRONG SELL", color=color.red, textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar)
-    if barstate.isconfirmed
-        alert("Strong Sell Signal!", alert.freq_once_per_bar_close)
-else if (sell_change > 0)
-    trigger_label := label.new(bar_index, high, "SELL", color=color.maroon, textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar)
-    if barstate.isconfirmed
-        alert("Sell Signal!", alert.freq_once_per_bar_close)
+if (strong_sell)
+    signal_label := label.new(bar_index, high, "� STRONG SELL", color=color.red, textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar)
+    alert("Strong Sell Opportunity!", alert.freq_once_per_bar_close)
+else if (sell_signal)
+    signal_label := label.new(bar_index, high, "SELL", color=color.maroon, textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar)
+    alert("Sell Signal!", alert.freq_once_per_bar_close)
 
-// Plot Target Lines (Live Update for current trade)
-plot(sl_price, "Stop Loss", color=color.new(color.red, 40), style=plot.style_linebr, linewidth=1)
-plot(tp1_price, "TP 1", color=color.new(color.green, 40), style=plot.style_linebr, linewidth=1)
-plot(tp2_price, "TP 2", color=color.new(color.aqua, 20), style=plot.style_linebr, linewidth=2)
+// Targets
+plot(sl_price, "Stop Loss", color=color.new(color.red, 50), style=plot.style_linebr)
+plot(tp_price, "Take Profit", color=color.new(color.green, 50), style=plot.style_linebr)
 
+// ==========================================
 // --- DASHBOARD ---
-var table panel = table.new(position.top_right, 2, 5, bgcolor=color.new(color.black, 40), border_width=1, border_color=color.gray)
+// ==========================================
+var table dash = table.new(position.top_right, 2, 4, bgcolor=color.new(color.black, 40), border_width=1, border_color=color.gray)
 if (barstate.islast)
-    // Headers
-    table.cell(panel, 0, 0, "Trade Metrics", text_color=color.white)
-    table.cell(panel, 1, 0, "Status", text_color=color.white)
+    // Simple, informative headers
+    table.cell(dash, 0, 0, "Trade Health", text_color=color.white)
+    table.cell(dash, 1, 0, "Value", text_color=color.white)
     
-    // Trend
-    table.cell(panel, 0, 1, "Market Trend", text_color=color.white)
-    table.cell(panel, 1, 1, trend_up ? "BULLISH" : "BEARISH", text_color=trend_up?color.green:color.red)
+    table.cell(dash, 0, 1, "Market Trend", text_color=color.white)
+    table.cell(dash, 1, 1, bullish_market ? "BULLISH" : bearish_market ? "BEARISH" : "NEUTRAL", text_color=bullish_market ? color.green : bearish_market ? color.red : color.gray)
     
-    // Momentum
-    table.cell(panel, 0, 2, "Momentum (RSI)", text_color=color.white)
-    table.cell(panel, 1, 2, str.format("{0,number,#.##}", rsi), text_color=rsi > 50 ? color.green : color.red)
+    table.cell(dash, 0, 2, "Momentum", text_color=color.white)
+    table.cell(dash, 1, 2, str.format("{0,number,#.##}", rsi), text_color=rsi > 50 ? color.green : color.red)
     
-    // Volume
-    table.cell(panel, 0, 3, "Volume Power", text_color=color.white)
-    table.cell(panel, 1, 3, vol_bullish ? "HIGH" : "LOW", text_color=vol_bullish?color.aqua:color.gray)
-    
-    // Profit Targets
-    table.cell(panel, 0, 4, "Profit Goal (TP2)", text_color=color.white)
-    table.cell(panel, 1, 4, str.format("{0,number,#.##}", tp2_price), text_color=color.green)
-
-// --- LIVE BAR CONFIRMATION ---
-// Ensures no repainting alerts
-if barstate.isconfirmed
-    if (buy_change > 0 or sell_change > 0)
-        label.new(bar_index, low, "CONFIRMED", color=color.aqua, size=size.tiny, style=label.style_label_up, yloc=yloc.belowbar)
-
-bgcolor(strong_buy_ch > 0 ? color.new(color.green, 90) : strong_sell_ch > 0 ? color.new(color.red, 90) : na)
+    table.cell(dash, 0, 3, "Profit Target", text_color=color.white)
+    table.cell(dash, 1, 3, str.format("{0,number,#.##}", tp_price), text_color=color.aqua)
