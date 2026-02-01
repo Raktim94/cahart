@@ -27,9 +27,10 @@ atr_mult_tp1 = input.float(1.2, "TP1 ATR Multiplier", step=0.1, group=grp_visual
 atr_mult_tp2 = input.float(2.5, "TP2 ATR Multiplier", step=0.1, group=grp_visuals)
 
 // --- CALCULATIONS ---
-// Multi-Timeframe Trend
-float mtf_close = request.security(syminfo.tickerid, mtf_res, close, lookahead=barmerge.lookahead_on)
-float mtf_ema   = request.security(syminfo.tickerid, mtf_res, ta.ema(close, 50), lookahead=barmerge.lookahead_on)
+// Multi-Timeframe Trend (Optimized for Real-Time/Live Charts)
+// Using lookahead=barmerge.lookahead_off to prevent repainting.
+float mtf_close = request.security(syminfo.tickerid, mtf_res, close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+float mtf_ema   = request.security(syminfo.tickerid, mtf_res, ta.ema(close, 50), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 mtf_bullish = not use_mtf or mtf_close > mtf_ema
 
 // Volume Flow Index (VFI) - Advanced Institutional Filter
