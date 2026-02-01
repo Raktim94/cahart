@@ -88,11 +88,11 @@ sell_signal  = sell_trigger and close < ema50
 strong_buy   = buy_signal and vfi_bullish and mtf_bullish and rsi > 55 and volume > vol_ma
 strong_sell  = sell_signal and not vfi_bullish and not mtf_bullish and rsi < 45 and volume > vol_ma
 
-// Extraction for real-time consistency
-buy_ch   = ta.change(buy_signal)
-sell_ch  = ta.change(sell_signal)
-s_buy_ch = ta.change(strong_buy)
-s_sell_ch= ta.change(strong_sell)
+// Trigger Detections (Fixed for Pine Script v6 boolean logic)
+buy_ch    = buy_signal and not buy_signal[1]
+sell_ch   = sell_signal and not sell_signal[1]
+s_buy_ch  = strong_buy and not strong_buy[1]
+s_sell_ch = strong_sell and not strong_sell[1]
 
 // --- ATR-BASED DYNAMIC TARGETS ---
 atr = ta.atr(atr_len)
@@ -100,12 +100,12 @@ var float sl_lvl = na
 var float tp1_lvl = na
 var float tp2_lvl = na
 
-if (buy_ch > 0 or s_buy_ch > 0)
+if (buy_ch or s_buy_ch)
     sl_lvl  := low - (atr * sl_atr_mult)
     tp1_lvl := close + (atr * tp1_atr_mult)
     tp2_lvl := close + (atr * tp2_atr_mult)
 
-if (sell_ch > 0 or s_sell_ch > 0)
+if (sell_ch or s_sell_ch)
     sl_lvl  := high + (atr * sl_atr_mult)
     tp1_lvl := close - (atr * tp1_atr_mult)
     tp2_lvl := close - (atr * tp2_atr_mult)
@@ -126,16 +126,18 @@ if barstate.isrealtime and not barstate.isconfirmed
     label.delete(sig_label)
 
 // Signal Labels
-if (s_buy_ch > 0)
+if (s_buy_ch)
     sig_label := label.new(bar_index, low, "💎 STRONG BUY", color=color.new(color.aqua, 0), textcolor=color.black, style=label.style_label_up, yloc=yloc.belowbar, size=size.normal)
-    alert("Strong Buy Signal!", alert.freq_once_per_bar_close)
-else if (buy_ch > 0)
+    if barstate.isconfirmed
+        alert("Strong Buy Signal!", alert.freq_once_per_bar_close)
+else if (buy_ch)
     sig_label := label.new(bar_index, low, "BUY", color=color.new(color.green, 0), textcolor=color.white, style=label.style_label_up, yloc=yloc.belowbar, size=size.small)
 
-if (s_sell_ch > 0)
+if (s_sell_ch)
     sig_label := label.new(bar_index, high, "💀 STRONG SELL", color=color.new(color.orange, 0), textcolor=color.black, style=label.style_label_down, yloc=yloc.abovebar, size=size.normal)
-    alert("Strong Sell Signal!", alert.freq_once_per_bar_close)
-else if (sell_ch > 0)
+    if barstate.isconfirmed
+        alert("Strong Sell Signal!", alert.freq_once_per_bar_close)
+else if (sell_ch)
     sig_label := label.new(bar_index, high, "SELL", color=color.new(color.red, 0), textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar, size=size.small)
 
 // Dynamic Target Plots
@@ -174,5 +176,5 @@ if (barstate.islast)
 
 // Confirmation for Real-Time Execution
 if barstate.isconfirmed
-    if (buy_ch > 0 or sell_ch > 0)
+    if (buy_ch or sell_ch)
         label.new(bar_index, low, "CONFIRMED", color=color.new(color.aqua, 20), size=size.tiny, style=label.style_label_up, yloc=yloc.belowbar)
