@@ -55,16 +55,6 @@ bb_lower = ta.sma(close, 20) - 2.0 * ta.stdev(close, 20)
 kc_upper = ta.sma(close, 20) + 1.5 * ta.atr(20)
 kc_lower = ta.sma(close, 20) - 1.5 * ta.atr(20)
 is_squeeze = bb_upper < kc_upper and bb_lower > kc_lower
-
-// Breakout Logic (Price breaking out of Bands after a Squeeze)
-was_squeeze = is_squeeze[1]
-breakout_up = not is_squeeze and was_squeeze and close > bb_upper
-breakout_dn = not is_squeeze and was_squeeze and close < bb_lower
-
-// Liquidity (Volume SMA)
-vol_sma = ta.sma(volume, 50)
-high_liquidity = volume > vol_sma * 1.5
-
 // SuperTrend
 [st_val, st_dir] = ta.supertrend(st_factor, st_atr_len)
 st_buy  = st_dir < 0
@@ -73,7 +63,7 @@ st_sell = st_dir > 0
 // Momentum (RSI)
 rsi = ta.rsi(close, rsi_len)
 
-// EMAs
+// EMAs (Trade Lines)
 ema9  = ta.ema(close, 9)
 ema21 = ta.ema(close, 21)
 ema50 = ta.ema(close, 50)
@@ -84,10 +74,11 @@ no_squeeze = not use_squeeze or not is_squeeze
 // Standard Signals
 buy_trigger  = ta.change(st_dir) < 0 and no_squeeze and close > ema50
 sell_trigger = ta.change(st_dir) > 0 and no_squeeze and close < ema50
-
-// Ultra Signal (Institutional Confirmation)
-ultra_buy  = buy_trigger and vfi_bullish and mtf_bullish and rsi > 55
-ultra_sell = sell_trigger and not vfi_bullish and not mtf_bullish and rsi < 45
+// Final signals (Enterprise Logic)
+buy_signal   = buy_trigger and no_squeeze
+sell_signal  = sell_trigger and no_squeeze
+strong_buy   = buy_trigger and vfi_bullish and mtf_bullish and rsi > 55
+strong_sell  = sell_trigger and not vfi_bullish and not mtf_bullish and rsi < 45
 
 // --- TARGET CALCULATIONS ---
 float atr = ta.atr(14)
@@ -95,35 +86,33 @@ var float sl_lvl = na
 var float tp1_lvl = na
 var float tp2_lvl = na
 
-if (buy_trigger or ultra_buy)
+if (buy_trigger or strong_buy)
     sl_lvl  := low - (atr * atr_mult_sl)
     tp1_lvl := close + (atr * atr_mult_tp1)
     tp2_lvl := close + (atr * atr_mult_tp2)
-if (sell_trigger or ultra_sell)
+if (sell_trigger or strong_sell)
     sl_lvl  := high + (atr * atr_mult_sl)
     tp1_lvl := close - (atr * atr_mult_tp1)
     tp2_lvl := close - (atr * atr_mult_tp2)
 
 // --- VISUALS ---
-// EMAs and Trend
+// EMAs and Trend (The "Trade Line" is EMA 50)
 plot(ema9, "Short Term", color=color.new(color.aqua, 60))
 plot(ema21, "Medium Term", color=color.new(color.yellow, 60))
-plot(ema50, "Trend Line", color=st_buy ? color.green : color.red, linewidth=2)
+plot(ema50, "Trade Line (EMA 50)", color=st_buy ? color.green : color.red, linewidth=3)
 
 // Labels
-if (ultra_buy or breakout_up)
-    string txt = ultra_buy ? "💎 ULTRA BUY" : "🔥 BREAKOUT UP"
-    label.new(bar_index, low, txt, color=color.new(color.aqua, 0), textcolor=color.black, style=label.style_label_up, yloc=yloc.belowbar, size=size.normal)
+if (strong_buy)
+    label.new(bar_index, low, "STRONG BUY", color=color.new(color.aqua, 0), textcolor=color.black, style=label.style_label_up, yloc=yloc.belowbar, size=size.normal)
     if barstate.isconfirmed
-        alert("Enterprise Signal: " + txt, alert.freq_once_per_bar_close)
-else if (buy_trigger)
+        alert("Strong Buy Signal!", alert.freq_once_per_bar_close)
+else if (buy_signal)
     label.new(bar_index, low, "BUY", color=color.new(color.green, 0), textcolor=color.white, style=label.style_label_up, yloc=yloc.belowbar, size=size.small)
 
-if (ultra_sell or breakout_dn)
-    string txt = ultra_sell ? "🔥 ULTRA SELL" : "🔥 BREAKOUT DOWN"
-    label.new(bar_index, high, txt, color=color.new(color.orange, 0), textcolor=color.black, style=label.style_label_down, yloc=yloc.abovebar, size=size.normal)
+if (strong_sell)
+    label.new(bar_index, high, "STRONG SELL", color=color.new(color.orange, 0), textcolor=color.black, style=label.style_label_down, yloc=yloc.abovebar, size=size.normal)
     if barstate.isconfirmed
-        alert("Enterprise Signal: " + txt, alert.freq_once_per_bar_close)
+        alert("Strong Sell Signal!", alert.freq_once_per_bar_close)
 else if (sell_trigger)
     label.new(bar_index, high, "SELL", color=color.new(color.red, 0), textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar, size=size.small)
 
@@ -138,7 +127,7 @@ var table stats = table.new(position.bottom_right, 2, 6, bgcolor=color.new(color
 if (barstate.islast)
     // Headers
     table.cell(stats, 0, 0, "Enterprise Metrics", text_color=color.white, text_size=size.small)
-    table.cell(stats, 1, 0, "Value/Status", text_color=color.white, text_size=size.small)
+    table.cell(stats, 1, 0, "Status", text_color=color.white, text_size=size.small)
     
     // MTF
     table.cell(stats, 0, 1, "HTF Trend (" + mtf_res + ")", text_color=color.white)
@@ -154,11 +143,11 @@ if (barstate.islast)
     
     // Targets
     table.cell(stats, 0, 4, "Current Signal", text_color=color.white)
-    string sig_txt = ultra_buy ? "ULTRA BUY" : ultra_sell ? "ULTRA SELL" : breakout_up ? "BREAKOUT" : "Looking..."
+    string sig_txt = strong_buy ? "STRONG BUY" : strong_sell ? "STRONG SELL" : "Looking..."
     table.cell(stats, 1, 4, sig_txt, text_color=color.white)
     
     table.cell(stats, 0, 5, "TP2 Target", text_color=color.white)
     table.cell(stats, 1, 5, str.format("{0,number,#.##}", tp2_lvl), text_color=color.green)
 
 // --- BACKGROUNDS ---
-bgcolor(ultra_buy ? color.new(color.green, 90) : ultra_sell ? color.new(color.red, 90) : na)
+bgcolor(strong_buy ? color.new(color.green, 90) : strong_sell ? color.new(color.red, 90) : na)
