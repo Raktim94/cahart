@@ -73,21 +73,30 @@ plot(hma, "Trend Line", color=color.new(hma_color, 20), linewidth=3)
 // Background Fill for Trend
 bgcolor(trend_up ? color.new(color.green, 95) : color.new(color.red, 95))
 
-// Signal Labels
-// Using only one label per signal to keep it clean
+// Signal Management for Real-Time Charts
+var label trigger_label = na
+
+// Clear labels on current bar if they aren't confirmed yet (to prevent flickering duplicates)
+if barstate.isrealtime and not barstate.isconfirmed
+    label.delete(trigger_label)
+
 if (ta.change(strong_buy) > 0)
-    label.new(bar_index, low, "🚀 STRONG BUY", color=color.green, textcolor=color.black, style=label.style_label_up, yloc=yloc.belowbar)
-    alert("Strong Buy Signal!", alert.freq_once_per_bar_close)
+    trigger_label := label.new(bar_index, low, "🚀 STRONG BUY", color=color.green, textcolor=color.black, style=label.style_label_up, yloc=yloc.belowbar)
+    if barstate.isconfirmed
+        alert("Strong Buy Signal!", alert.freq_once_per_bar_close)
 else if (ta.change(buy_trigger) > 0)
-    label.new(bar_index, low, "BUY", color=color.lime, textcolor=color.black, style=label.style_label_up, yloc=yloc.belowbar)
-    alert("Buy Signal!", alert.freq_once_per_bar_close)
+    trigger_label := label.new(bar_index, low, "BUY", color=color.lime, textcolor=color.black, style=label.style_label_up, yloc=yloc.belowbar)
+    if barstate.isconfirmed
+        alert("Buy Signal!", alert.freq_once_per_bar_close)
 
 if (ta.change(strong_sell) > 0)
-    label.new(bar_index, high, "💀 STRONG SELL", color=color.red, textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar)
-    alert("Strong Sell Signal!", alert.freq_once_per_bar_close)
+    trigger_label := label.new(bar_index, high, "💀 STRONG SELL", color=color.red, textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar)
+    if barstate.isconfirmed
+        alert("Strong Sell Signal!", alert.freq_once_per_bar_close)
 else if (ta.change(sell_trigger) > 0)
-    label.new(bar_index, high, "SELL", color=color.maroon, textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar)
-    alert("Sell Signal!", alert.freq_once_per_bar_close)
+    trigger_label := label.new(bar_index, high, "SELL", color=color.maroon, textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar)
+    if barstate.isconfirmed
+        alert("Sell Signal!", alert.freq_once_per_bar_close)
 
 // Plot Target Lines (Live Update for current trade)
 plot(sl_price, "Stop Loss", color=color.new(color.red, 40), style=plot.style_linebr, linewidth=1)
