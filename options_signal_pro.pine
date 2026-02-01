@@ -1,0 +1,150 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © ranjitraktim5
+
+//@version=6
+indicator("Options Signal Enterprise [Antigravity]", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// --- INPUTS ---
+grp_mtf = "Multi-Timeframe Analysis"
+use_mtf = input.bool(true, "Use MTF Trend Confirmation", group=grp_mtf)
+mtf_res = input.timeframe("D", "Higher Timeframe Resolution", group=grp_mtf)
+
+grp_signals = "Signal Sensitivity"
+st_atr_len = input.int(10, "SuperTrend ATR Length", group=grp_signals)
+st_factor  = input.float(3.0, "SuperTrend Factor", step=0.1, group=grp_signals)
+rsi_len    = input.int(14, "RSI Length", group=grp_signals)
+
+grp_filters = "Liquidity & False Signal Filters"
+vfi_len = input.int(130, "VFI Length (Institutional Flow)", group=grp_filters)
+vfi_coef = input.float(0.2, "VFI Coefficient", step=0.05, group=grp_filters)
+vfi_vcoef = input.float(2.5, "VFI Volume Coefficient", step=0.1, group=grp_filters)
+use_squeeze = input.bool(true, "Squeeze Filter (Avoid Chop)", group=grp_filters)
+
+grp_visuals = "Visual Targets (TP/SL)"
+show_targets = input.bool(true, "Show ATR Targets", group=grp_visuals)
+atr_mult_sl = input.float(1.5, "SL ATR Multiplier", step=0.1, group=grp_visuals)
+atr_mult_tp1 = input.float(1.2, "TP1 ATR Multiplier", step=0.1, group=grp_visuals)
+atr_mult_tp2 = input.float(2.5, "TP2 ATR Multiplier", step=0.1, group=grp_visuals)
+
+// --- CALCULATIONS ---
+// Multi-Timeframe Trend
+float mtf_close = request.security(syminfo.tickerid, mtf_res, close, lookahead=barmerge.lookahead_on)
+float mtf_ema   = request.security(syminfo.tickerid, mtf_res, ta.ema(close, 50), lookahead=barmerge.lookahead_on)
+mtf_bullish = not use_mtf or mtf_close > mtf_ema
+
+// Volume Flow Index (VFI) - Advanced Institutional Filter
+vfi_calc(len, coef, vcoef) =>
+    float _vfi = 0.0
+    float _typical = (high + low + close) / 3
+    float _inter = math.log(_typical) - math.log(_typical[1])
+    float _vave = ta.sma(volume, len)[1]
+    float _vmax = _vave * vcoef
+    float _vc = math.min(volume, _vmax)
+    float _mff = _typical - _typical[1]
+    float _v_cutoff = coef * ta.stdev(_inter, 30) * _typical
+    float _v_curr = _mff > _v_cutoff ? _vc : _mff < -_v_cutoff ? -_vc : 0
+    _vfi := ta.sma(ta.cum(_v_curr), len) / _vave
+    _vfi
+
+vfi_value = vfi_calc(vfi_len, vfi_coef, vfi_vcoef)
+vfi_bullish = vfi_value > 0
+
+// TTM Squeeze
+bb_upper = ta.sma(close, 20) + 2.0 * ta.stdev(close, 20)
+bb_lower = ta.sma(close, 20) - 2.0 * ta.stdev(close, 20)
+kc_upper = ta.sma(close, 20) + 1.5 * ta.atr(20)
+kc_lower = ta.sma(close, 20) - 1.5 * ta.atr(20)
+is_squeeze = bb_upper < kc_upper and bb_lower > kc_lower
+
+// SuperTrend
+[st_val, st_dir] = ta.supertrend(st_factor, st_atr_len)
+st_buy  = st_dir < 0
+st_sell = st_dir > 0
+
+// Momentum (RSI)
+rsi = ta.rsi(close, rsi_len)
+
+// EMAs
+ema9  = ta.ema(close, 9)
+ema21 = ta.ema(close, 21)
+ema50 = ta.ema(close, 50)
+
+// --- FINAL SIGNAL LOGIC ---
+no_squeeze = not use_squeeze or not is_squeeze
+
+// Standard Signals
+buy_trigger  = ta.change(st_dir) < 0 and no_squeeze and close > ema50
+sell_trigger = ta.change(st_dir) > 0 and no_squeeze and close < ema50
+
+// Ultra Signal (Institutional Confirmation)
+ultra_buy  = buy_trigger and vfi_bullish and mtf_bullish and rsi > 55
+ultra_sell = sell_trigger and not vfi_bullish and not mtf_bullish and rsi < 45
+
+// --- TARGET CALCULATIONS ---
+float atr = ta.atr(14)
+var float sl_lvl = na
+var float tp1_lvl = na
+var float tp2_lvl = na
+
+if (buy_trigger or ultra_buy)
+    sl_lvl  := low - (atr * atr_mult_sl)
+    tp1_lvl := close + (atr * atr_mult_tp1)
+    tp2_lvl := close + (atr * atr_mult_tp2)
+if (sell_trigger or ultra_sell)
+    sl_lvl  := high + (atr * atr_mult_sl)
+    tp1_lvl := close - (atr * atr_mult_tp1)
+    tp2_lvl := close - (atr * atr_mult_tp2)
+
+// --- VISUALS ---
+// EMAs and Trend
+plot(ema9, "Short Term", color=color.new(color.aqua, 60))
+plot(ema21, "Medium Term", color=color.new(color.yellow, 60))
+plot(ema50, "Trend Line", color=st_buy ? color.green : color.red, linewidth=2)
+
+// Labels
+if (ultra_buy)
+    label.new(bar_index, low, "💎 ULTRA BUY", color=color.new(color.aqua, 0), textcolor=color.black, style=label.style_label_up, yloc=yloc.belowbar, size=size.normal)
+    alert("Enterprise Ultra Buy!", alert.freq_once_per_bar_close)
+else if (buy_trigger)
+    label.new(bar_index, low, "BUY", color=color.new(color.green, 0), textcolor=color.white, style=label.style_label_up, yloc=yloc.belowbar, size=size.small)
+
+if (ultra_sell)
+    label.new(bar_index, high, "🔥 ULTRA SELL", color=color.new(color.orange, 0), textcolor=color.black, style=label.style_label_down, yloc=yloc.abovebar, size=size.normal)
+    alert("Enterprise Ultra Sell!", alert.freq_once_per_bar_close)
+else if (sell_trigger)
+    label.new(bar_index, high, "SELL", color=color.new(color.red, 0), textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar, size=size.small)
+
+// Plot TP/SL Lines (temporary for last signal)
+if (show_targets and barstate.islastconfirmedhistory)
+    line.new(bar_index - 5, sl_lvl, bar_index + 5, sl_lvl, color=color.red, width=2, style=line.style_dashed)
+    line.new(bar_index - 5, tp1_lvl, bar_index + 5, tp1_lvl, color=color.lime, width=1, style=line.style_dotted)
+    line.new(bar_index - 5, tp2_lvl, bar_index + 5, tp2_lvl, color=color.green, width=2, style=line.style_solid)
+
+// --- DATA DASHBOARD ---
+var table stats = table.new(position.bottom_right, 2, 6, bgcolor=color.new(color.black, 40), border_width=1, border_color=color.gray)
+if (barstate.islast)
+    // Headers
+    table.cell(stats, 0, 0, "Enterprise Metrics", text_color=color.white, text_size=size.small)
+    table.cell(stats, 1, 0, "Value/Status", text_color=color.white, text_size=size.small)
+    
+    // MTF
+    table.cell(stats, 0, 1, "HTF Trend (" + mtf_res + ")", text_color=color.white)
+    table.cell(stats, 1, 1, mtf_bullish ? "BULLISH" : "BEARISH", text_color=mtf_bullish?color.green:color.red)
+    
+    // Institutional Flow
+    table.cell(stats, 0, 2, "Inst. Flow (VFI)", text_color=color.white)
+    table.cell(stats, 1, 2, vfi_bullish ? "INFLOW" : "OUTFLOW", text_color=vfi_bullish?color.aqua:color.orange)
+    
+    // Volatility
+    table.cell(stats, 0, 3, "Volatility State", text_color=color.white)
+    table.cell(stats, 1, 3, is_squeeze ? "COMPRESSION" : "EXPANSION", text_color=is_squeeze?color.yellow:color.lime)
+    
+    // Targets
+    table.cell(stats, 0, 4, "Current Signal", text_color=color.white)
+    table.cell(stats, 1, 4, ultra_buy ? "ULTRA BUY" : ultra_sell ? "ULTRA SELL" : "Looking...", text_color=color.white)
+    
+    table.cell(stats, 0, 5, "TP2 Target", text_color=color.white)
+    table.cell(stats, 1, 5, str.format("{0,number,#.##}", tp2_lvl), text_color=color.green)
+
+// --- BACKGROUNDS ---
+bgcolor(ultra_buy ? color.new(color.green, 90) : ultra_sell ? color.new(color.red, 90) : na)
