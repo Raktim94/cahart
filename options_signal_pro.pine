@@ -11,6 +11,12 @@ grp_mtf = "🌐 Multi-Timeframe Analysis"
 use_mtf = input.bool(true, "Use MTF Trend Confirmation", group=grp_mtf)
 mtf_res = input.timeframe("D", "Higher Timeframe Resolution", group=grp_mtf)
 
+grp_sr = "🧱 Resistance & Support Zones"
+show_sr     = input.bool(true, "Show Support/Resistance Zones", group=grp_sr)
+sr_pivot    = input.int(20, "Pivot Period", minval=5, group=grp_sr)
+sr_width    = input.int(5, "Zone Width (Ticks)", group=grp_sr)
+sr_filter   = input.bool(true, "Filter Signals by Zones", group=grp_sr)
+
 grp_signals = "⚡ Signal Sensitivity"
 st_atr_len = input.int(10, "SuperTrend ATR Length", group=grp_signals)
 st_factor  = input.float(3.0, "SuperTrend Factor", step=0.1, group=grp_signals)
@@ -41,17 +47,15 @@ mtf_bullish     = not use_mtf or mtf_close > mtf_ema
 
 // 2. Volume Flow Index (VFI) - Institutional Tracking
 vfi_calc(len, coef, vcoef) =>
-    float _vfi = 0.0
     float _typical = (high + low + close) / 3
-    float _inter = math.log(_typical) - math.log(_typical[1])
+    float _inter = math.log(_typical) - math.log(nz(_typical[1], _typical))
     float _vave = ta.sma(volume, len)[1]
     float _vmax = _vave * vcoef
     float _vc = math.min(volume, _vmax)
-    float _mff = _typical - _typical[1]
+    float _mff = _typical - nz(_typical[1], _typical)
     float _v_cutoff = coef * ta.stdev(_inter, 30) * _typical
     float _v_curr = _mff > _v_cutoff ? _vc : _mff < -_v_cutoff ? -_vc : 0
-    _vfi := ta.sma(ta.cum(_v_curr), len) / _vave
-    _vfi
+    ta.sma(ta.cum(_v_curr), len) / nz(_vave, 1)
 
 vfi_val = vfi_calc(vfi_len, vfi_coef, vfi_vcoef)
 vfi_bullish = vfi_val > 0
@@ -64,7 +68,34 @@ kc_lower = ta.sma(close, 20) - 1.5 * ta.atr(20)
 is_squeeze = bb_upper < kc_upper and bb_lower > kc_lower
 no_squeeze = not use_squeeze or not is_squeeze
 
-// 4. Core Indicators
+// 4. Support & Resistance Zones (Real-Time Aware)
+ph = ta.pivothigh(high, sr_pivot, sr_pivot)
+pl = ta.pivotlow(low, sr_pivot, sr_pivot)
+
+var float resistance = na
+var float support = na
+
+if not na(ph)
+    resistance := ph
+if not na(pl)
+    support := pl
+
+// Zone Logic: Is price near S/R?
+near_resistance = close > resistance - (sr_width * syminfo.mintick)
+near_support = close < support + (sr_width * syminfo.mintick)
+
+// Visualizing S/R Zones
+if show_sr and barstate.islast
+    line.delete(line.new(bar_index-1, resistance, bar_index, resistance, extend=extend.both, color=color.new(color.red, 30), width=2)[1])
+    line.delete(line.new(bar_index-1, support, bar_index, support, extend=extend.both, color=color.new(color.green, 30), width=2)[1])
+    var box r_zone = box.new(bar_index-50, resistance + (sr_width * syminfo.mintick), bar_index, resistance - (sr_width * syminfo.mintick), bgcolor=color.new(color.red, 90), border_color=na)
+    var box s_zone = box.new(bar_index-50, support + (sr_width * syminfo.mintick), bar_index, support - (sr_width * syminfo.mintick), bgcolor=color.new(color.green, 90), border_color=na)
+    box.set_lefttop(r_zone, bar_index-50, resistance + (sr_width * syminfo.mintick))
+    box.set_rightbottom(r_zone, bar_index, resistance - (sr_width * syminfo.mintick))
+    box.set_lefttop(s_zone, bar_index-50, support + (sr_width * syminfo.mintick))
+    box.set_rightbottom(s_zone, bar_index, support - (sr_width * syminfo.mintick))
+
+// 5. Core Indicators
 [st_val, st_dir] = ta.supertrend(st_factor, st_atr_len)
 st_buy  = st_dir < 0
 st_sell = st_dir > 0
@@ -76,9 +107,9 @@ vol_ma  = ta.sma(volume, 20)
 // --- SIGNAL LOGIC ---
 // ==========================================
 
-// Baseline Triggers
-buy_trigger  = ta.change(st_dir) < 0 and no_squeeze
-sell_trigger = ta.change(st_dir) > 0 and no_squeeze
+// Baseline Triggers (Confirmed on close for real-time stability)
+buy_trigger  = ta.change(st_dir) < 0 and no_squeeze and (not sr_filter or not near_resistance)
+sell_trigger = ta.change(st_dir) > 0 and no_squeeze and (not sr_filter or not near_support)
 
 // Professional Signal Classification
 buy_signal   = buy_trigger and close > ema50
@@ -88,7 +119,7 @@ sell_signal  = sell_trigger and close < ema50
 strong_buy   = buy_signal and vfi_bullish and mtf_bullish and rsi > 55 and volume > vol_ma
 strong_sell  = sell_signal and not vfi_bullish and not mtf_bullish and rsi < 45 and volume > vol_ma
 
-// Trigger Detections (Fixed for Pine Script v6 boolean logic)
+// Trigger Detections
 buy_ch    = buy_signal and not buy_signal[1]
 sell_ch   = sell_signal and not sell_signal[1]
 s_buy_ch  = strong_buy and not strong_buy[1]
@@ -120,25 +151,23 @@ plot(ema50, "Trade Line (EMA 50)", color=st_buy ? color.green : color.red, linew
 // Background Trend Zone
 bgcolor(st_buy ? color.new(color.green, 96) : color.new(color.red, 96))
 
-// Professional Label Management (Anti-Flicker)
+// Professional Label Management (Anti-Flicker/Real-Time Fix)
 var label sig_label = na
-if barstate.isrealtime and not barstate.isconfirmed
-    label.delete(sig_label)
 
-// Signal Labels
+// Signal Labels (Confirmed vs. Real-Time)
 if (s_buy_ch)
-    sig_label := label.new(bar_index, low, "💎 STRONG BUY", color=color.new(color.aqua, 0), textcolor=color.black, style=label.style_label_up, yloc=yloc.belowbar, size=size.normal)
+    sig_label := label.new(bar_index, low, "💎 STRONG BUY", color=color.new(color.aqua, 20), textcolor=color.black, style=label.style_label_up, yloc=yloc.belowbar, size=size.normal)
     if barstate.isconfirmed
         alert("Strong Buy Signal!", alert.freq_once_per_bar_close)
 else if (buy_ch)
-    sig_label := label.new(bar_index, low, "BUY", color=color.new(color.green, 0), textcolor=color.white, style=label.style_label_up, yloc=yloc.belowbar, size=size.small)
+    sig_label := label.new(bar_index, low, "BUY", color=color.new(color.green, 20), textcolor=color.white, style=label.style_label_up, yloc=yloc.belowbar, size=size.small)
 
 if (s_sell_ch)
-    sig_label := label.new(bar_index, high, "💀 STRONG SELL", color=color.new(color.orange, 0), textcolor=color.black, style=label.style_label_down, yloc=yloc.abovebar, size=size.normal)
+    sig_label := label.new(bar_index, high, "💀 STRONG SELL", color=color.new(color.orange, 20), textcolor=color.black, style=label.style_label_down, yloc=yloc.abovebar, size=size.normal)
     if barstate.isconfirmed
         alert("Strong Sell Signal!", alert.freq_once_per_bar_close)
 else if (sell_ch)
-    sig_label := label.new(bar_index, high, "SELL", color=color.new(color.red, 0), textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar, size=size.small)
+    sig_label := label.new(bar_index, high, "SELL", color=color.new(color.red, 20), textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar, size=size.small)
 
 // Dynamic Target Plots
 plot(sl_lvl, "Stop Loss", color=color.new(color.red, 40), style=plot.style_linebr, linewidth=1)
@@ -148,7 +177,7 @@ plot(tp2_lvl, "TP 2 (Major)", color=color.new(color.green, 20), style=plot.style
 // ==========================================
 // --- ENTERPRISE DASHBOARD ---
 // ==========================================
-var table board = table.new(position.top_right, 2, 6, bgcolor=color.new(color.black, 40), border_width=1, border_color=color.gray)
+var table board = table.new(position.top_right, 2, 7, bgcolor=color.new(color.black, 40), border_width=1, border_color=color.gray)
 if (barstate.islast)
     // Header
     table.cell(board, 0, 0, "Enterprise PRO Metrics", text_color=color.white, text_size=size.small)
@@ -170,11 +199,15 @@ if (barstate.islast)
     table.cell(board, 0, 4, "Squeeze State", text_color=color.white)
     table.cell(board, 1, 4, is_squeeze ? "COMPRESSION" : "EXPANSION", text_color=is_squeeze?color.yellow:color.lime)
     
+    // Zone Awareness
+    table.cell(board, 0, 5, "Zone Risk", text_color=color.white)
+    table.cell(board, 1, 5, near_resistance ? "NEAR RESIST" : near_support ? "NEAR SUPPORT" : "CLEAR", text_color=near_resistance?color.orange:near_support?color.lime:color.gray)
+    
     // Current Target
-    table.cell(board, 0, 5, "Major Target (TP2)", text_color=color.white)
-    table.cell(board, 1, 5, str.format("{0,number,#.##}", tp2_lvl), text_color=color.green)
+    table.cell(board, 0, 6, "Major Target (TP2)", text_color=color.white)
+    table.cell(board, 1, 6, str.format("{0,number,#.##}", tp2_lvl), text_color=color.green)
 
 // Confirmation for Real-Time Execution
 if barstate.isconfirmed
-    if (buy_ch or sell_ch)
-        label.new(bar_index, low, "CONFIRMED", color=color.new(color.aqua, 20), size=size.tiny, style=label.style_label_up, yloc=yloc.belowbar)
+    if (buy_ch or sell_ch or s_buy_ch or s_sell_ch)
+        label.new(bar_index, low, "CONFIRMED ✅", color=color.new(color.aqua, 20), size=size.tiny, style=label.style_label_up, yloc=yloc.belowbar)
