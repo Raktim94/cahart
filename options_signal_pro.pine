@@ -7,234 +7,138 @@ indicator("Options Signal Enterprise PRO [Antigravity]", overlay=true, max_label
 // ==========================================
 // --- INPUTS ---
 // ==========================================
-grp_mtf = "🌐 Multi-Timeframe Analysis"
-use_mtf = input.bool(true, "Use MTF Trend Confirmation", group=grp_mtf)
-mtf_res = input.timeframe("D", "Higher Timeframe Resolution", group=grp_mtf)
+grp_vis = "📺 Visual Management"
+show_sr     = input.bool(false, "Show S/R Zones (Clutter)", group=grp_vis)
+show_dash   = input.bool(false, "Show Dashboard", group=grp_vis)
+large_sig   = input.bool(true, "High-Contrast Labels", group=grp_vis)
 
-grp_sr = "🧱 Resistance & Support Zones"
-show_sr     = input.bool(true, "Show Support/Resistance Zones", group=grp_sr)
-sr_pivot    = input.int(20, "Pivot Period", minval=5, group=grp_sr)
-sr_width    = input.int(5, "Zone Width (Ticks)", group=grp_sr)
-sr_filter   = input.bool(true, "Filter Signals by Zones", group=grp_sr)
+grp_signals = "⚡ Signal Accuracy & Speed"
+fast_mode  = input.bool(true, "🚀 Fast Response (Zero-Lag)", group=grp_signals)
+sr_filter   = input.bool(true, "🛡️ Zone Rejection Filter", group=grp_signals)
+mtf_filter  = input.bool(true, "🌐 Higher Timeframe Confirmation", group=grp_signals)
 
-grp_signals = "⚡ Signal Sensitivity"
-fast_mode  = input.bool(true, "🚀 Fast Response Mode", group=grp_signals)
-st_atr_len = input.int(7, "SuperTrend ATR Length", group=grp_signals)
-st_factor  = input.float(2.0, "SuperTrend Factor", step=0.1, group=grp_signals)
-rsi_len    = input.int(10, "RSI Length", group=grp_signals)
+grp_params  = "⚙️ Algorithm Tuning"
+st_factor  = input.float(1.5, "Sensitivity Factor", step=0.1, group=grp_params)
+vfi_len    = input.int(30, "Volume Flow Period", group=grp_params)
+sr_pivot   = input.int(5, "Zone Lookback", group=grp_params)
 
-grp_sr = "🧱 Resistance & Support Zones"
-show_sr     = input.bool(true, "Show Support/Resistance Zones", group=grp_sr)
-sr_pivot    = input.int(5, "Pivot Period (Faster)", minval=2, group=grp_sr)
-sr_width    = input.int(5, "Zone Width (Ticks)", group=grp_sr)
-sr_filter   = input.bool(true, "Filter Signals by Zones", group=grp_sr)
-
-grp_filters = "🏦 Institutional Flow (VFI)"
-vfi_len   = input.int(30, "VFI Length (Faster)", group=grp_filters)
-vfi_coef  = input.float(0.2, "VFI Coefficient", step=0.05, group=grp_filters)
-vfi_vcoef = input.float(2.5, "VFI Vol Coefficient", step=0.1, group=grp_filters)
-
-grp_vol = "🌪️ Volatility & Squeeze"
-use_squeeze = input.bool(false, "Squeeze Filter (Disable for Faster entries)", group=grp_vol)
-
-grp_risk = "💰 Risk Management"
-atr_len      = input.int(10, "ATR Period (Fast)", group=grp_risk)
-sl_atr_mult  = input.float(1.5, "Stop Loss ATR Mult", step=0.1, group=grp_risk)
-tp1_atr_mult = input.float(1.5, "TP 1 ATR Mult", step=0.1, group=grp_risk)
-tp2_atr_mult = input.float(3.0, "TP 2 ATR Mult", step=0.1, group=grp_risk)
+// Hidden/Internal Defaults
+atr_len = 10
+st_atr_len = 7
+rsi_len = 7
+ema_fast = 20
+mtf_res = input.timeframe("D", "HTF Reference", group="⚙️ Algorithm Tuning")
 
 // ==========================================
-// --- CALCULATIONS ---
+// --- CORE CALCULATIONS ---
 // ==========================================
 
-// 1. Multi-Timeframe Bias (Made Faster)
-mtf_val = timeframe.isintraday ? "60" : "D" // Dynamic MTF
-float mtf_close = request.security(syminfo.tickerid, use_mtf ? mtf_res : timeframe.period, close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-float mtf_ema   = request.security(syminfo.tickerid, use_mtf ? mtf_res : timeframe.period, ta.ema(close, fast_mode ? 20 : 50), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-mtf_bullish     = not use_mtf or mtf_close > mtf_ema
+// 1. High-Speed Trend (SuperTrend)
+[st_val, st_dir] = ta.supertrend(st_factor, st_atr_len)
+st_buy  = st_dir < 0
+st_sell = st_dir > 0
 
-// 2. Volume Flow Index (VFI) - Institutional Tracking (Optimized)
-vfi_calc(len, coef, vcoef) =>
+// 2. Momentum & Institutional Flow
+rsi = ta.rsi(close, rsi_len)
+vfi_calc(len) =>
     float _typical = (high + low + close) / 3
     float _inter = math.log(_typical) - math.log(nz(_typical[1], _typical))
     float _vave = ta.sma(volume, len)[1]
-    float _vmax = _vave * vcoef
+    float _vmax = _vave * 2.5
     float _vc = math.min(volume, _vmax)
     float _mff = _typical - nz(_typical[1], _typical)
-    float _v_cutoff = coef * ta.stdev(_inter, 30) * _typical
+    float _v_cutoff = 0.2 * ta.stdev(_inter, 30) * _typical
     float _v_curr = _mff > _v_cutoff ? _vc : _mff < -_v_cutoff ? -_vc : 0
     ta.sma(ta.cum(_v_curr), len) / nz(_vave, 1)
 
-vfi_val = vfi_calc(fast_mode ? 20 : vfi_len, vfi_coef, vfi_vcoef)
+vfi_val = vfi_calc(vfi_len)
 vfi_bullish = vfi_val > 0
 
-// 3. TTM Squeeze Logics
-bb_upper = ta.sma(close, 20) + 2.0 * ta.stdev(close, 20)
-bb_lower = ta.sma(close, 20) - 2.0 * ta.stdev(close, 20)
-kc_upper = ta.sma(close, 20) + 1.5 * ta.atr(20)
-kc_lower = ta.sma(close, 20) - 1.5 * ta.atr(20)
-is_squeeze = bb_upper < kc_upper and bb_lower > kc_lower
-no_squeeze = not use_squeeze or not is_squeeze
+// 3. Multi-Timeframe Bias
+float mtf_close = request.security(syminfo.tickerid, mtf_res, close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+float mtf_ema   = request.security(syminfo.tickerid, mtf_res, ta.ema(close, 20), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+mtf_bullish     = not mtf_filter or mtf_close > mtf_ema
 
-// 4. Support & Resistance Zones (Super Fast)
+// 4. S/R Zone Logic (Optimized for Filtering)
 ph = ta.pivothigh(high, sr_pivot, sr_pivot)
 pl = ta.pivotlow(low, sr_pivot, sr_pivot)
-
 var float resistance = na
 var float support = na
-
 if not na(ph)
     resistance := ph
 if not na(pl)
     support := pl
 
-// Zone Logic: Is price near S/R?
-near_resistance = close > resistance - (sr_width * syminfo.mintick)
-near_support = close < support + (sr_width * syminfo.mintick)
+near_resistance = close > resistance - (5 * syminfo.mintick)
+near_support = close < support + (5 * syminfo.mintick)
 
-// Visualizing S/R Zones
+// Visualizing S/R (Only if enabled)
 if show_sr and barstate.islast
-    line.delete(line.new(bar_index-1, resistance, bar_index, resistance, extend=extend.both, color=color.new(color.red, 30), width=2)[1])
-    line.delete(line.new(bar_index-1, support, bar_index, support, extend=extend.both, color=color.new(color.green, 30), width=2)[1])
-    var box r_zone = box.new(bar_index-50, resistance + (sr_width * syminfo.mintick), bar_index, resistance - (sr_width * syminfo.mintick), bgcolor=color.new(color.red, 90), border_color=na)
-    var box s_zone = box.new(bar_index-50, support + (sr_width * syminfo.mintick), bar_index, support - (sr_width * syminfo.mintick), bgcolor=color.new(color.green, 90), border_color=na)
-    box.set_lefttop(r_zone, bar_index-50, resistance + (sr_width * syminfo.mintick))
-    box.set_rightbottom(r_zone, bar_index, resistance - (sr_width * syminfo.mintick))
-    box.set_lefttop(s_zone, bar_index-50, support + (sr_width * syminfo.mintick))
-    box.set_rightbottom(s_zone, bar_index, support - (sr_width * syminfo.mintick))
-
-// 5. Core Indicators (Tuned)
-[st_val, st_dir] = ta.supertrend(fast_mode ? 1.5 : st_factor, fast_mode ? 7 : st_atr_len)
-st_buy  = st_dir < 0
-st_sell = st_dir > 0
-rsi     = ta.rsi(close, fast_mode ? 7 : rsi_len)
-ema50   = ta.ema(close, fast_mode ? 20 : 50)
-vol_ma  = ta.sma(volume, 20)
+    var box r_zone = box.new(bar_index-50, resistance + (5 * syminfo.mintick), bar_index, resistance - (5 * syminfo.mintick), bgcolor=color.new(color.red, 90), border_color=na)
+    var box s_zone = box.new(bar_index-50, support + (5 * syminfo.mintick), bar_index, support - (5 * syminfo.mintick), bgcolor=color.new(color.green, 90), border_color=na)
+    box.set_lefttop(r_zone, bar_index-50, resistance + (5 * syminfo.mintick))
+    box.set_rightbottom(r_zone, bar_index, resistance - (5 * syminfo.mintick))
+    box.set_lefttop(s_zone, bar_index-50, support + (5 * syminfo.mintick))
+    box.set_rightbottom(s_zone, bar_index, support - (5 * syminfo.mintick))
 
 // ==========================================
-// --- SIGNAL LOGIC ---
+// --- ACCURACY SIGNAL ENGINE ---
 // ==========================================
 
-// Baseline Triggers (Confirmed on close for real-time stability)
-buy_trigger  = ta.change(st_dir) < 0 and no_squeeze and (not sr_filter or not near_resistance)
-sell_trigger = ta.change(st_dir) > 0 and no_squeeze and (not sr_filter or not near_support)
+// Merged Condition for Maximum Accuracy
+buy_ready  = ta.change(st_dir) < 0 and (not sr_filter or not near_resistance) and mtf_bullish and vfi_bullish
+sell_ready = ta.change(st_dir) > 0 and (not sr_filter or not near_support) and not mtf_bullish and not vfi_bullish
 
-// Professional Signal Classification
-buy_signal   = buy_trigger and close > ema50
-sell_signal  = sell_trigger and close < ema50
+// High Probability Signal Triggers
+buy_signal  = buy_ready and rsi > 50
+sell_signal = sell_ready and rsi < 50
 
-// Strong (Enterprise) Signals
-strong_buy   = buy_signal and vfi_bullish and mtf_bullish and rsi > 55 and volume > vol_ma
-strong_sell  = sell_signal and not vfi_bullish and not mtf_bullish and rsi < 45 and volume > vol_ma
-
-// Trigger Detections
-buy_ch    = buy_signal and not buy_signal[1]
-sell_ch   = sell_signal and not sell_signal[1]
-s_buy_ch  = strong_buy and not strong_buy[1]
-s_sell_ch = strong_sell and not strong_sell[1]
-
-// --- ATR-BASED DYNAMIC TARGETS ---
-atr = ta.atr(atr_len)
-var float sl_lvl = na
-var float tp1_lvl = na
-var float tp2_lvl = na
-
-if (buy_ch or s_buy_ch)
-    sl_lvl  := low - (atr * sl_atr_mult)
-    tp1_lvl := close + (atr * tp1_atr_mult)
-    tp2_lvl := close + (atr * tp2_atr_mult)
-
-if (sell_ch or s_sell_ch)
-    sl_lvl  := high + (atr * sl_atr_mult)
-    tp1_lvl := close - (atr * tp1_atr_mult)
-    tp2_lvl := close - (atr * tp2_atr_mult)
+// Detect Change
+buy_ch  = buy_signal and not buy_signal[1]
+sell_ch = sell_signal and not sell_signal[1]
 
 // ==========================================
-// --- VISUAL ARCHITECTURE ---
+// --- LABEL MANAGEMENT (REAL-TIME) ---
 // ==========================================
-
-// Trade Line (EMA 50)
-plot(ema50, "Trade Line (EMA 50)", color=st_buy ? color.green : color.red, linewidth=3)
-
-// Background Trend Zone
-bgcolor(st_buy ? color.new(color.green, 96) : color.new(color.red, 96))
-
-// Professional Label Management (Anti-Flicker/Real-Time Fix)
-var label sig_label = na
-
-// Professional Label Management (Instant Real-Time Feedback)
 var label rt_label = na
 
-if s_buy_ch or buy_ch or s_sell_ch or sell_ch
-    string txt = s_buy_ch ? "💎 STRONG BUY" : buy_ch ? "BUY" : s_sell_ch ? "💀 STRONG SELL" : "SELL"
-    color clr = s_buy_ch ? color.new(color.aqua, 20) : buy_ch ? color.new(color.green, 20) : s_sell_ch ? color.new(color.orange, 20) : color.new(color.red, 20)
-    color tclr = (s_buy_ch or s_sell_ch) ? color.black : color.white
-    label_style = (s_buy_ch or buy_ch) ? label.style_label_up : label.style_label_down
-    yl = (s_buy_ch or buy_ch) ? yloc.belowbar : yloc.abovebar
-    sz = (s_buy_ch or s_sell_ch) ? size.normal : size.small
+if buy_ch or sell_ch
+    string txt = buy_ch ? "🚀 BUY" : "💀 SELL"
+    color clr  = buy_ch ? color.new(color.lime, 0) : color.new(color.red, 0)
+    color tclr = color.white
+    yl = buy_ch ? yloc.belowbar : yloc.abovebar
+    styl = buy_ch ? label.style_label_up : label.style_label_down
+    sz = large_sig ? size.normal : size.small
     
     if barstate.isconfirmed
-        // Bar is closed, lock it in
-        label.new(bar_index, yl == yloc.belowbar ? low : high, txt, color=clr, textcolor=tclr, style=label_style, yloc=yl, size=sz)
-        if s_buy_ch or s_sell_ch
-            alert(txt + " Signal confirmed!", alert.freq_once_per_bar_close)
+        label.new(bar_index, yl == yloc.belowbar ? low : high, txt, color=clr, textcolor=tclr, style=styl, yloc=yl, size=sz)
+        alert(txt + " Signal Detected!", alert.freq_once_per_bar_close)
     else
-        // Real-time: update OR create a temporary label for current bar
+        // Instant Real-Time feedback
         if na(rt_label) or label.get_x(rt_label) != bar_index
-            rt_label := label.new(bar_index, yl == yloc.belowbar ? low : high, txt, color=clr, textcolor=tclr, style=label_style, yloc=yl, size=sz)
+            rt_label := label.new(bar_index, yl == yloc.belowbar ? low : high, txt, color=clr, textcolor=tclr, style=styl, yloc=yl, size=sz)
         else
             label.set_xy(rt_label, bar_index, yl == yloc.belowbar ? low : high)
             label.set_text(rt_label, txt)
-            label.set_color(rt_label, clr)
-            label.set_textcolor(rt_label, tclr)
-            label.set_style(rt_label, label_style)
-            label.set_yloc(rt_label, yl)
-            label.set_size(rt_label, sz)
 else
-    // Clear if signal condition is lost in real-time
+    // Clear if signal vanishes on current tick
     if not barstate.isconfirmed and not na(rt_label) and label.get_x(rt_label) == bar_index
         label.delete(rt_label)
         rt_label := na
 
-// Dynamic Target Plots
-plot(sl_lvl, "Stop Loss", color=color.new(color.red, 40), style=plot.style_linebr, linewidth=1)
-plot(tp1_lvl, "TP 1", color=color.new(color.lime, 40), style=plot.style_linebr, linewidth=1)
-plot(tp2_lvl, "TP 2 (Major)", color=color.new(color.green, 20), style=plot.style_linebr, linewidth=2)
-
 // ==========================================
-// --- ENTERPRISE DASHBOARD ---
+// --- MINIMALIST UI ---
 // ==========================================
-var table board = table.new(position.top_right, 2, 7, bgcolor=color.new(color.black, 40), border_width=1, border_color=color.gray)
-if (barstate.islast)
-    // Header
-    table.cell(board, 0, 0, "Enterprise PRO Metrics", text_color=color.white, text_size=size.small)
-    table.cell(board, 1, 0, "Status", text_color=color.white, text_size=size.small)
-    
-    // MTF
-    table.cell(board, 0, 1, "HTF Trend (" + mtf_res + ")", text_color=color.white)
-    table.cell(board, 1, 1, mtf_bullish ? "BULLISH" : "BEARISH", text_color=mtf_bullish?color.green:color.red)
-    
-    // Institutional Flow
-    table.cell(board, 0, 2, "Inst. Flow (VFI)", text_color=color.white)
-    table.cell(board, 1, 2, vfi_bullish ? "INFLOW" : "OUTFLOW", text_color=vfi_bullish?color.aqua:color.orange)
-    
-    // Momentum
-    table.cell(board, 0, 3, "Momentum (RSI)", text_color=color.white)
-    table.cell(board, 1, 3, str.format("{0,number,#.##}", rsi), text_color=rsi > 50 ? color.green : color.red)
 
-    // Volatility
-    table.cell(board, 0, 4, "Squeeze State", text_color=color.white)
-    table.cell(board, 1, 4, is_squeeze ? "COMPRESSION" : "EXPANSION", text_color=is_squeeze?color.yellow:color.lime)
-    
-    // Zone Awareness
-    table.cell(board, 0, 5, "Zone Risk", text_color=color.white)
-    table.cell(board, 1, 5, near_resistance ? "NEAR RESIST" : near_support ? "NEAR SUPPORT" : "CLEAR", text_color=near_resistance?color.orange:near_support?color.lime:color.gray)
-    
-    // Current Target
-    table.cell(board, 0, 6, "Major Target (TP2)", text_color=color.white)
-    table.cell(board, 1, 6, str.format("{0,number,#.##}", tp2_lvl), text_color=color.green)
+// Clean EMA Line
+plot(ta.ema(close, ema_fast), "Trend Line", color=st_buy ? color.new(color.lime, 40) : color.new(color.red, 40), linewidth=2)
 
-// Confirmation for Real-Time Execution
-if barstate.isconfirmed
-    if (buy_ch or sell_ch or s_buy_ch or s_sell_ch)
-        label.new(bar_index, low, "CONFIRMED ✅", color=color.new(color.aqua, 20), size=size.tiny, style=label.style_label_up, yloc=yloc.belowbar)
+// Dashboard (Only if enabled)
+if (show_dash and barstate.islast)
+    var table board = table.new(position.top_right, 2, 1, bgcolor=color.new(color.black, 40), border_width=1, border_color=color.gray)
+    status_txt = "Trend: " + (st_buy ? "BULL" : "BEAR") + " | Flow: " + (vfi_bullish ? "IN" : "OUT")
+    table.cell(board, 0, 0, "Enterprise PRO Status", text_color=color.white, text_size=size.small)
+    table.cell(board, 1, 0, status_txt, text_color=st_buy ? color.lime : color.red, text_size=size.small)
+
+// Background Trend (Subtle)
+bgcolor(st_buy ? color.new(color.green, 98) : color.new(color.red, 98))
