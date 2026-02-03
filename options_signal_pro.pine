@@ -18,34 +18,42 @@ sr_width    = input.int(5, "Zone Width (Ticks)", group=grp_sr)
 sr_filter   = input.bool(true, "Filter Signals by Zones", group=grp_sr)
 
 grp_signals = "⚡ Signal Sensitivity"
-st_atr_len = input.int(10, "SuperTrend ATR Length", group=grp_signals)
-st_factor  = input.float(3.0, "SuperTrend Factor", step=0.1, group=grp_signals)
-rsi_len    = input.int(14, "RSI Length", group=grp_signals)
+fast_mode  = input.bool(true, "🚀 Fast Response Mode", group=grp_signals)
+st_atr_len = input.int(7, "SuperTrend ATR Length", group=grp_signals)
+st_factor  = input.float(2.0, "SuperTrend Factor", step=0.1, group=grp_signals)
+rsi_len    = input.int(10, "RSI Length", group=grp_signals)
+
+grp_sr = "🧱 Resistance & Support Zones"
+show_sr     = input.bool(true, "Show Support/Resistance Zones", group=grp_sr)
+sr_pivot    = input.int(5, "Pivot Period (Faster)", minval=2, group=grp_sr)
+sr_width    = input.int(5, "Zone Width (Ticks)", group=grp_sr)
+sr_filter   = input.bool(true, "Filter Signals by Zones", group=grp_sr)
 
 grp_filters = "🏦 Institutional Flow (VFI)"
-vfi_len   = input.int(130, "VFI Length", group=grp_filters)
+vfi_len   = input.int(30, "VFI Length (Faster)", group=grp_filters)
 vfi_coef  = input.float(0.2, "VFI Coefficient", step=0.05, group=grp_filters)
 vfi_vcoef = input.float(2.5, "VFI Vol Coefficient", step=0.1, group=grp_filters)
 
 grp_vol = "🌪️ Volatility & Squeeze"
-use_squeeze = input.bool(true, "Squeeze Filter (Avoid Chop)", group=grp_vol)
+use_squeeze = input.bool(false, "Squeeze Filter (Disable for Faster entries)", group=grp_vol)
 
 grp_risk = "💰 Risk Management"
-atr_len      = input.int(14, "ATR Period", group=grp_risk)
+atr_len      = input.int(10, "ATR Period (Fast)", group=grp_risk)
 sl_atr_mult  = input.float(1.5, "Stop Loss ATR Mult", step=0.1, group=grp_risk)
-tp1_atr_mult = input.float(1.2, "TP 1 ATR Mult", step=0.1, group=grp_risk)
-tp2_atr_mult = input.float(2.5, "TP 2 ATR Mult", step=0.1, group=grp_risk)
+tp1_atr_mult = input.float(1.5, "TP 1 ATR Mult", step=0.1, group=grp_risk)
+tp2_atr_mult = input.float(3.0, "TP 2 ATR Mult", step=0.1, group=grp_risk)
 
 // ==========================================
 // --- CALCULATIONS ---
 // ==========================================
 
-// 1. Multi-Timeframe Bias
-float mtf_close = request.security(syminfo.tickerid, mtf_res, close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
-float mtf_ema   = request.security(syminfo.tickerid, mtf_res, ta.ema(close, 50), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+// 1. Multi-Timeframe Bias (Made Faster)
+mtf_val = timeframe.isintraday ? "60" : "D" // Dynamic MTF
+float mtf_close = request.security(syminfo.tickerid, use_mtf ? mtf_res : timeframe.period, close, gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+float mtf_ema   = request.security(syminfo.tickerid, use_mtf ? mtf_res : timeframe.period, ta.ema(close, fast_mode ? 20 : 50), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
 mtf_bullish     = not use_mtf or mtf_close > mtf_ema
 
-// 2. Volume Flow Index (VFI) - Institutional Tracking
+// 2. Volume Flow Index (VFI) - Institutional Tracking (Optimized)
 vfi_calc(len, coef, vcoef) =>
     float _typical = (high + low + close) / 3
     float _inter = math.log(_typical) - math.log(nz(_typical[1], _typical))
@@ -57,7 +65,7 @@ vfi_calc(len, coef, vcoef) =>
     float _v_curr = _mff > _v_cutoff ? _vc : _mff < -_v_cutoff ? -_vc : 0
     ta.sma(ta.cum(_v_curr), len) / nz(_vave, 1)
 
-vfi_val = vfi_calc(vfi_len, vfi_coef, vfi_vcoef)
+vfi_val = vfi_calc(fast_mode ? 20 : vfi_len, vfi_coef, vfi_vcoef)
 vfi_bullish = vfi_val > 0
 
 // 3. TTM Squeeze Logics
@@ -68,7 +76,7 @@ kc_lower = ta.sma(close, 20) - 1.5 * ta.atr(20)
 is_squeeze = bb_upper < kc_upper and bb_lower > kc_lower
 no_squeeze = not use_squeeze or not is_squeeze
 
-// 4. Support & Resistance Zones (Real-Time Aware)
+// 4. Support & Resistance Zones (Super Fast)
 ph = ta.pivothigh(high, sr_pivot, sr_pivot)
 pl = ta.pivotlow(low, sr_pivot, sr_pivot)
 
@@ -95,12 +103,12 @@ if show_sr and barstate.islast
     box.set_lefttop(s_zone, bar_index-50, support + (sr_width * syminfo.mintick))
     box.set_rightbottom(s_zone, bar_index, support - (sr_width * syminfo.mintick))
 
-// 5. Core Indicators
-[st_val, st_dir] = ta.supertrend(st_factor, st_atr_len)
+// 5. Core Indicators (Tuned)
+[st_val, st_dir] = ta.supertrend(fast_mode ? 1.5 : st_factor, fast_mode ? 7 : st_atr_len)
 st_buy  = st_dir < 0
 st_sell = st_dir > 0
-rsi     = ta.rsi(close, rsi_len)
-ema50   = ta.ema(close, 50)
+rsi     = ta.rsi(close, fast_mode ? 7 : rsi_len)
+ema50   = ta.ema(close, fast_mode ? 20 : 50)
 vol_ma  = ta.sma(volume, 20)
 
 // ==========================================
